@@ -101,7 +101,7 @@ namespace Worker
                 var dbPort = Environment.GetEnvironmentVariable("DB_PORT") ?? "5432";
                 var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "redis";
 
-                var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort}";
+                var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort};Trust Server Certificate=true"; // TODO: Use SSL
                 
                 var pgsql = OpenDbConnection(dbConnectionString);
                 var redisConn = OpenRedisConnection(redisHost);
