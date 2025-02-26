@@ -56,6 +56,16 @@ def hello():
     resp.set_cookie('voter_id', voter_id)
     return resp
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    try:
+        redis = get_redis()
+        redis.ping()
+        return "OK", 200
+    except Exception as e:
+        app.logger.error("Health check failed: %s", str(e))
+        return "Unhealthy", 500
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=80, debug=True, threaded=True)
