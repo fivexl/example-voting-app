@@ -94,8 +94,17 @@ namespace Worker
         {
             try
             {
-                var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
-                var redisConn = OpenRedisConnection("redis");
+                var dbHost = Environment.GetEnvironmentVariable("DB_HOST") ?? "db";
+                var dbUser = Environment.GetEnvironmentVariable("DB_USER") ?? "postgres";
+                var dbName = Environment.GetEnvironmentVariable("DB_NAME") ?? "postgres";
+                var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "postgres";
+                var dbPort = Environment.GetEnvironmentVariable("DB_PORT") ?? "5432";
+                var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "redis";
+
+                var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort}";
+                
+                var pgsql = OpenDbConnection(dbConnectionString);
+                var redisConn = OpenRedisConnection(redisHost);
                 var redis = redisConn.GetDatabase();
 
                 var healthCheck = new HealthCheck(dbConnectionString, redisHost);
@@ -117,7 +126,7 @@ namespace Worker
                     // Reconnect redis if down
                     if (redisConn == null || !redisConn.IsConnected) {
                         Console.WriteLine("Reconnecting Redis");
-                        redisConn = OpenRedisConnection("redis");
+                        redisConn = OpenRedisConnection(redisHost);
                         redis = redisConn.GetDatabase();
                     }
                     string json = redis.ListLeftPopAsync("votes").Result;
@@ -129,7 +138,7 @@ namespace Worker
                         if (!pgsql.State.Equals(System.Data.ConnectionState.Open))
                         {
                             Console.WriteLine("Reconnecting DB");
-                            pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                            pgsql = OpenDbConnection(dbConnectionString);
                         }
                         else
                         { // Normal +1 vote requested
