@@ -10,6 +10,84 @@ using StackExchange.Redis;
 
 namespace Worker
 {
+    public class HealthCheck
+    {
+        private readonly string _dbConnectionString;
+        private readonly string _redisHost;
+
+        public HealthCheck(string dbConnectionString, string redisHost)
+        {
+            _dbConnectionString = dbConnectionString;
+            _redisHost = redisHost;
+        }
+
+        public void Start()
+        {
+            var listener = new HttpListener();
+            listener.Prefixes.Add("http://*:8080/health/");
+            listener.Start();
+            Console.WriteLine("Health check running on port 8080");
+
+            while (true)
+            {
+                var context = listener.GetContext();
+                var response = context.Response;
+
+                if (CheckDatabase() && CheckRedis())
+                {
+                    response.StatusCode = 200;
+                    var buffer = System.Text.Encoding.UTF8.GetBytes("OK");
+                    response.OutputStream.Write(buffer, 0, buffer.Length);
+                }
+                else
+                {
+                    response.StatusCode = 500;
+                    var buffer = System.Text.Encoding.UTF8.GetBytes("Unhealthy");
+                    response.OutputStream.Write(buffer, 0, buffer.Length);
+                }
+
+                response.Close();
+            }
+        }
+
+        private bool CheckDatabase()
+        {
+            try
+            {
+                using (var connection = new NpgsqlConnection(_dbConnectionString))
+                {
+                    connection.Open();
+                    using (var command = connection.CreateCommand())
+                    {
+                        command.CommandText = "SELECT 1";
+                        command.ExecuteNonQuery();
+                    }
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Database health check failed: {e.Message}");
+                return false;
+            }
+        }
+
+        private bool CheckRedis()
+        {
+            try
+            {
+                using (var redis = ConnectionMultiplexer.Connect(_redisHost))
+                {
+                    return redis.GetDatabase().Ping() < TimeSpan.FromMilliseconds(100);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Redis health check failed: {e.Message}");
+                return false;
+            }
+        }
+    }
     public class Program
     {
         public static int Main(string[] args)
@@ -19,6 +97,11 @@ namespace Worker
                 var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
                 var redisConn = OpenRedisConnection("redis");
                 var redis = redisConn.GetDatabase();
+
+                var healthCheck = new HealthCheck(dbConnectionString, redisHost);
+                var healthCheckThread = new Thread(healthCheck.Start);
+                healthCheckThread.IsBackground = true;
+                healthCheckThread.Start();
 
                 // Keep alive is not implemented in Npgsql yet. This workaround was recommended:
                 // https://github.com/npgsql/npgsql/issues/1214#issuecomment-235828359
