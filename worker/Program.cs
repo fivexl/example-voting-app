@@ -178,10 +178,10 @@ namespace Worker
                     Thread.Sleep(100);
 
                     // Reconnect redis if down
-                    if (redisConn == null || !redisConn.IsConnected) {
+                    if (!redis.IsConnected)
+                    {
                         Console.WriteLine("Reconnecting Redis");
-                        redisConn = OpenRedisConnection(redisHost);
-                        redis = redisConn.GetDatabase();
+                        redis = RedisManager.GetRedis();
                     }
                     string json = redis.ListLeftPopAsync("votes").Result;
                     if (json != null)
