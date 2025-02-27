@@ -178,7 +178,7 @@ namespace Worker
                     Thread.Sleep(100);
 
                     // Reconnect redis if down
-                    if (!redis.IsConnected)
+                    if (!_redisConnection.IsConnected)
                     {
                         Console.WriteLine("Reconnecting Redis");
                         redis = RedisManager.GetRedis();
