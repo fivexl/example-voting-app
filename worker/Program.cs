@@ -10,6 +10,63 @@ using StackExchange.Redis;
 
 namespace Worker
 {
+    public class RedisManager
+    {
+        private static ConnectionMultiplexer _redisConnection;
+        private static readonly object LockObject = new object();
+
+        public static IDatabase GetRedis()
+        {
+            if (_redisConnection == null || !_redisConnection.IsConnected)
+            {
+                lock (LockObject)
+                {
+                    if (_redisConnection == null || !_redisConnection.IsConnected)
+                    {
+                        _redisConnection = OpenRedisConnection();
+                    }
+                }
+            }
+            return _redisConnection.GetDatabase();
+        }
+
+        private static ConnectionMultiplexer OpenRedisConnection()
+        {
+            var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "redis";
+            var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379";
+            var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
+            var redisDb = Environment.GetEnvironmentVariable("REDIS_DB") ?? "0";
+            var redisSocketTimeout = Environment.GetEnvironmentVariable("REDIS_SOCKET_TIMEOUT") ?? "5000";
+
+            var configOptions = new ConfigurationOptions
+            {
+                EndPoints = { $"{redisHost}:{redisPort}" },
+                ConnectTimeout = int.Parse(redisSocketTimeout),
+                AbortOnConnectFail = false,
+                DefaultDatabase = int.Parse(redisDb),
+            };
+
+            if (!string.IsNullOrEmpty(redisPassword))
+            {
+                configOptions.Password = redisPassword;
+            }
+
+            while (true)
+            {
+                try
+                {
+                    Console.WriteLine($"Connecting to Redis at {redisHost}:{redisPort}...");
+                    return ConnectionMultiplexer.Connect(configOptions);
+                }
+                catch (RedisConnectionException)
+                {
+                    Console.WriteLine("Redis connection failed. Retrying...");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+    }
+
     public class HealthCheck
     {
         private readonly string _dbConnectionString;
@@ -76,10 +133,8 @@ namespace Worker
         {
             try
             {
-                using (var redis = ConnectionMultiplexer.Connect(_redisHost))
-                {
-                    return redis.GetDatabase().Ping() < TimeSpan.FromMilliseconds(100);
-                }
+                var redis = RedisManager.GetRedis();
+                return redis.Ping() < TimeSpan.FromMilliseconds(100);
             }
             catch (Exception e)
             {
@@ -104,8 +159,7 @@ namespace Worker
                 var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort};SslMode=Require;Trust Server Certificate=true"; // TODO: Use SSL
                 
                 var pgsql = OpenDbConnection(dbConnectionString);
-                var redisConn = OpenRedisConnection(redisHost);
-                var redis = redisConn.GetDatabase();
+                var redis = RedisManager.GetRedis();
 
                 var healthCheck = new HealthCheck(dbConnectionString, redisHost);
                 var healthCheckThread = new Thread(healthCheck.Start);
