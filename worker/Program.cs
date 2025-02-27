@@ -178,7 +178,8 @@ namespace Worker
                     Thread.Sleep(100);
 
                     // Reconnect redis if down
-                    if (!_redisConnection.IsConnected)
+                    var multiplexer = redis.Multiplexer;
+                    if (!multiplexer.IsConnected)
                     {
                         Console.WriteLine("Reconnecting Redis");
                         redis = RedisManager.GetRedis();
