@@ -10,13 +10,16 @@ using StackExchange.Redis;
 
 namespace Worker
 {
-    public class RedisManager
+    public class RedisManager : IDisposable
     {
         private static ConnectionMultiplexer _redisConnection;
         private static readonly object LockObject = new object();
+        private static volatile bool _disposed;
 
         public static IDatabase GetRedis()
         {
+            if (_disposed) throw new ObjectDisposedException(nameof(RedisManager));
+            
             if (_redisConnection == null || !_redisConnection.IsConnected)
             {
                 lock (LockObject)
@@ -65,45 +68,86 @@ namespace Worker
                 }
             }
         }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            
+            lock (LockObject)
+            {
+                if (_disposed) return;
+                
+                if (_redisConnection != null)
+                {
+                    _redisConnection.Close();
+                    _redisConnection.Dispose();
+                    _redisConnection = null;
+                }
+                _disposed = true;
+            }
+        }
     }
 
-    public class HealthCheck
+    public class HealthCheck : IDisposable
     {
         private readonly string _dbConnectionString;
         private readonly string _redisHost;
+        private readonly HttpListener _listener;
+        private readonly CancellationTokenSource _cancellationTokenSource;
+        private readonly int _redisTimeoutMs;
+        private bool _disposed;
 
-        public HealthCheck(string dbConnectionString, string redisHost)
+        public HealthCheck(string dbConnectionString, string redisHost, int redisTimeoutMs = 500)
         {
             _dbConnectionString = dbConnectionString;
             _redisHost = redisHost;
+            _redisTimeoutMs = redisTimeoutMs;
+            _listener = new HttpListener();
+            _cancellationTokenSource = new CancellationTokenSource();
+            
+            // Only listen on localhost for security
+            _listener.Prefixes.Add("http://localhost:8080/health/");
         }
 
         public void Start()
         {
-            var listener = new HttpListener();
-            listener.Prefixes.Add("http://*:8080/health/");
-            listener.Start();
+            _listener.Start();
             Console.WriteLine("Health check running on port 8080");
 
-            while (true)
+            while (!_cancellationTokenSource.Token.IsCancellationRequested)
             {
-                var context = listener.GetContext();
-                var response = context.Response;
-
-                if (CheckDatabase() && CheckRedis())
+                try 
                 {
-                    response.StatusCode = 200;
-                    var buffer = System.Text.Encoding.UTF8.GetBytes("OK");
-                    response.OutputStream.Write(buffer, 0, buffer.Length);
+                    var context = _listener.GetContext();
+                    HandleHealthCheck(context);
                 }
-                else
+                catch (HttpListenerException) when (_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    response.StatusCode = 500;
-                    var buffer = System.Text.Encoding.UTF8.GetBytes("Unhealthy");
-                    response.OutputStream.Write(buffer, 0, buffer.Length);
+                    // Normal shutdown
+                    break;
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Health check error: {ex.Message}");
+                }
+            }
+        }
 
-                response.Close();
+        private void HandleHealthCheck(HttpListenerContext context)
+        {
+            using (var response = context.Response)
+            {
+                var isHealthy = CheckDatabase() && CheckRedis();
+                
+                response.StatusCode = isHealthy ? 200 : 500;
+                response.ContentType = "application/json";
+                
+                var status = new { status = isHealthy ? "healthy" : "unhealthy" };
+                var json = JsonConvert.SerializeObject(status);
+                var buffer = System.Text.Encoding.UTF8.GetBytes(json);
+                
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
             }
         }
 
@@ -117,6 +161,7 @@ namespace Worker
                     using (var command = connection.CreateCommand())
                     {
                         command.CommandText = "SELECT 1";
+                        command.CommandTimeout = 5; // 5 second timeout
                         command.ExecuteNonQuery();
                     }
                 }
@@ -134,7 +179,7 @@ namespace Worker
             try
             {
                 var redis = RedisManager.GetRedis();
-                return redis.Ping() < TimeSpan.FromMilliseconds(100);
+                return redis.Ping() < TimeSpan.FromMilliseconds(_redisTimeoutMs);
             }
             catch (Exception e)
             {
@@ -142,11 +187,31 @@ namespace Worker
                 return false;
             }
         }
+
+        public void Stop()
+        {
+            _cancellationTokenSource.Cancel();
+            _listener.Stop();
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            
+            _disposed = true;
+            _cancellationTokenSource.Cancel();
+            _cancellationTokenSource.Dispose();
+            _listener.Close();
+            
+            GC.SuppressFinalize(this);
+        }
     }
+
     public class Program
     {
         public static int Main(string[] args)
         {
+            HealthCheck healthCheck = null;
             try
             {
                 var dbHost = Environment.GetEnvironmentVariable("DB_HOST") ?? "db";
@@ -156,12 +221,12 @@ namespace Worker
                 var dbPort = Environment.GetEnvironmentVariable("DB_PORT") ?? "5432";
                 var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "redis";
 
-                var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort};SslMode=Require;Trust Server Certificate=true"; // TODO: Use SSL
+                var dbConnectionString = $"Host={dbHost};Username={dbUser};Password={dbPassword};Database={dbName};Port={dbPort};SslMode=Require;Trust Server Certificate=true";
                 
                 var pgsql = OpenDbConnection(dbConnectionString);
                 var redis = RedisManager.GetRedis();
 
-                var healthCheck = new HealthCheck(dbConnectionString, redisHost);
+                healthCheck = new HealthCheck(dbConnectionString, redisHost);
                 var healthCheckThread = new Thread(healthCheck.Start);
                 healthCheckThread.IsBackground = true;
                 healthCheckThread.Start();
@@ -211,6 +276,10 @@ namespace Worker
                 Console.Error.WriteLine(ex.ToString());
                 return 1;
             }
+            finally
+            {
+                healthCheck?.Dispose();
+            }
         }
 
         private static NpgsqlConnection OpenDbConnection(string connectionString)
@@ -252,27 +321,6 @@ namespace Worker
             command.ExecuteNonQuery();
 
             return connection;
-        }
-
-        private static ConnectionMultiplexer OpenRedisConnection(string hostname)
-        {
-            // Use IP address to workaround https://github.com/StackExchange/StackExchange.Redis/issues/410
-            var ipAddress = GetIp(hostname);
-            Console.WriteLine($"Found redis at {ipAddress}");
-
-            while (true)
-            {
-                try
-                {
-                    Console.Error.WriteLine("Connecting to redis");
-                    return ConnectionMultiplexer.Connect(ipAddress);
-                }
-                catch (RedisConnectionException)
-                {
-                    Console.Error.WriteLine("Waiting for redis");
-                    Thread.Sleep(1000);
-                }
-            }
         }
 
         private static string GetIp(string hostname)
