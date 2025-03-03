@@ -523,10 +523,7 @@ namespace Worker
             
                     Console.Error.WriteLine($"Database connection attempt {retryCount} failed:");
                     Console.Error.WriteLine($"  Error Code: {ex.ErrorCode}");
-                    Console.Error.WriteLine($"  Severity: {ex.Severity}");
                     Console.Error.WriteLine($"  Message: {ex.Message}");
-                    Console.Error.WriteLine($"  Detail: {ex.Detail}");
-                    Console.Error.WriteLine($"  Hint: {ex.Hint}");
             
                     if (ex.InnerException != null)
                     {
@@ -549,7 +546,10 @@ namespace Worker
                     {
                         try
                         {
-                            await connection?.DisposeAsync();
+                            if (connection != null)
+                            {
+                                await connection.DisposeAsync();
+                            }
                         }
                         catch (Exception ex)
                         {
