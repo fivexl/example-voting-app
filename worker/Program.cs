@@ -208,11 +208,8 @@ namespace Worker
             _cancellationTokenSource = new CancellationTokenSource();
             _healthCheckLock = new SemaphoreSlim(1, 1);
             
-            // Add multiple prefixes to handle different health check paths
-            _listener.Prefixes.Add("http://+:8080/health/");
-            _listener.Prefixes.Add("http://+:8080/health");
-            _listener.Prefixes.Add("http://localhost:8080/health/");
-            _listener.Prefixes.Add("http://localhost:8080/health");
+            // Add the primary prefix with trailing slash
+            _listener.Prefixes.Add("http://*:8080/health/");
         }
 
         public async void Start()
@@ -222,17 +219,18 @@ namespace Worker
                 try
                 {
                     _listener.Start();
+                    Console.WriteLine($"Health check started successfully on {string.Join(", ", _listener.Prefixes)}");
                 }
                 catch (HttpListenerException ex)
                 {
-                    // If binding to + fails, try binding to * as fallback
+                    Console.Error.WriteLine($"Failed to start health check with primary binding: {ex.Message}");
+                    
+                    // Try localhost as fallback
                     _listener.Prefixes.Clear();
-                    _listener.Prefixes.Add("http://*:8080/health/");
-                    _listener.Prefixes.Add("http://*:8080/health");
+                    _listener.Prefixes.Add("http://localhost:8080/health/");
                     _listener.Start();
+                    Console.WriteLine("Health check started with fallback localhost binding");
                 }
-
-                Console.WriteLine($"Health check running on port 8080 with prefixes: {string.Join(", ", _listener.Prefixes)}");
 
                 // Perform initial health check
                 var initialHealth = await CheckHealthAsync();
@@ -243,24 +241,30 @@ namespace Worker
                     try 
                     {
                         var context = await _listener.GetContextAsync();
-                        _ = HandleHealthCheckAsync(context); // Fire and forget, but with error handling
+                        var path = context.Request.Url.AbsolutePath.TrimEnd('/');
+                        if (path == "/health")
+                        {
+                            Console.WriteLine($"Received health check request from {context.Request.RemoteEndPoint}");
+                            _ = HandleHealthCheckAsync(context);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Received request for unknown path: {path}");
+                            context.Response.StatusCode = 404;
+                            context.Response.Close();
+                        }
                     }
-                    catch (HttpListenerException) when (_cancellationTokenSource.Token.IsCancellationRequested)
-                    {
-                        // Normal shutdown
-                        break;
-                    }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!_cancellationTokenSource.Token.IsCancellationRequested)
                     {
                         Console.Error.WriteLine($"Health check error: {ex.Message}");
-                        await Task.Delay(1000, _cancellationTokenSource.Token); // Back off on errors
+                        await Task.Delay(1000, _cancellationTokenSource.Token);
                     }
                 }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Fatal error in health check service: {ex}");
-                throw; // Rethrow to crash the container if health check can't start
+                throw;
             }
         }
 
@@ -270,8 +274,6 @@ namespace Worker
             {
                 using (var response = context.Response)
                 {
-                    Console.WriteLine($"Received health check request from {context.Request.RemoteEndPoint} for {context.Request.RawUrl}");
-                    
                     var isHealthy = await CheckHealthAsync();
                     
                     response.StatusCode = isHealthy ? 200 : 500;
@@ -291,8 +293,6 @@ namespace Worker
                     
                     response.ContentLength64 = buffer.Length;
                     await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                    
-                    Console.WriteLine($"Health check response: {json}");
                 }
             }
             catch (Exception ex)
