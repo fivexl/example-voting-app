@@ -208,8 +208,8 @@ namespace Worker
             _cancellationTokenSource = new CancellationTokenSource();
             _healthCheckLock = new SemaphoreSlim(1, 1);
             
-            // Add the primary prefix with trailing slash
-            _listener.Prefixes.Add("http://*:8080/health/");
+            // Add prefix with required trailing slash
+            _listener.Prefixes.Add("http://+:8080/health/");
         }
 
         public async void Start()
@@ -225,11 +225,25 @@ namespace Worker
                 {
                     Console.Error.WriteLine($"Failed to start health check with primary binding: {ex.Message}");
                     
-                    // Try localhost as fallback
-                    _listener.Prefixes.Clear();
-                    _listener.Prefixes.Add("http://localhost:8080/health/");
-                    _listener.Start();
-                    Console.WriteLine("Health check started with fallback localhost binding");
+                    // Try different bindings in order of preference
+                    foreach (var prefix in new[] { 
+                        "http://*:8080/health/",
+                        "http://localhost:8080/health/" 
+                    })
+                    {
+                        try
+                        {
+                            _listener.Prefixes.Clear();
+                            _listener.Prefixes.Add(prefix);
+                            _listener.Start();
+                            Console.WriteLine($"Health check started successfully with fallback binding: {prefix}");
+                            break;
+                        }
+                        catch (HttpListenerException fallbackEx)
+                        {
+                            Console.Error.WriteLine($"Failed to bind to {prefix}: {fallbackEx.Message}");
+                        }
+                    }
                 }
 
                 // Perform initial health check
@@ -241,15 +255,17 @@ namespace Worker
                     try 
                     {
                         var context = await _listener.GetContextAsync();
-                        var path = context.Request.Url.AbsolutePath.TrimEnd('/');
+                        Console.WriteLine($"Received request: {context.Request.HttpMethod} {context.Request.Url?.AbsolutePath} from {context.Request.RemoteEndPoint}");
+                        
+                        // Normalize the path by trimming trailing slashes
+                        var path = context.Request.Url?.AbsolutePath.TrimEnd('/');
                         if (path == "/health")
                         {
-                            Console.WriteLine($"Received health check request from {context.Request.RemoteEndPoint}");
                             _ = HandleHealthCheckAsync(context);
                         }
                         else
                         {
-                            Console.WriteLine($"Received request for unknown path: {path}");
+                            Console.WriteLine($"Received request for unknown path: {context.Request.Url?.AbsolutePath}");
                             context.Response.StatusCode = 404;
                             context.Response.Close();
                         }
@@ -272,27 +288,34 @@ namespace Worker
         {
             try
             {
+                Console.WriteLine($"Processing health check request from {context.Request.RemoteEndPoint}");
+                var startTime = DateTime.UtcNow;
+                
                 using (var response = context.Response)
                 {
                     var isHealthy = await CheckHealthAsync();
+                    var responseTime = DateTime.UtcNow - startTime;
                     
                     response.StatusCode = isHealthy ? 200 : 500;
                     response.ContentType = "application/json";
                     response.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
-                    response.Headers.Add("Pragma", "no-cache");
-                    response.Headers.Add("Expires", "0");
                     
                     var status = new { 
                         status = isHealthy ? "healthy" : "unhealthy",
                         timestamp = DateTime.UtcNow,
+                        responseTime = responseTime.TotalMilliseconds,
                         redis = await CheckRedisAsync(),
                         database = await CheckDatabaseAsync()
                     };
-                    var json = JsonConvert.SerializeObject(status);
-                    var buffer = System.Text.Encoding.UTF8.GetBytes(json);
                     
+                    var json = JsonConvert.SerializeObject(status);
+                    Console.WriteLine($"Health check response: {json}");
+                    
+                    var buffer = System.Text.Encoding.UTF8.GetBytes(json);
                     response.ContentLength64 = buffer.Length;
                     await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    
+                    Console.WriteLine($"Health check completed in {responseTime.TotalMilliseconds}ms with status code {response.StatusCode}");
                 }
             }
             catch (Exception ex)
@@ -301,9 +324,16 @@ namespace Worker
                 try
                 {
                     context.Response.StatusCode = 500;
+                    var errorJson = JsonConvert.SerializeObject(new { status = "unhealthy", error = ex.Message });
+                    var errorBytes = System.Text.Encoding.UTF8.GetBytes(errorJson);
+                    context.Response.ContentLength64 = errorBytes.Length;
+                    await context.Response.OutputStream.WriteAsync(errorBytes, 0, errorBytes.Length);
                     context.Response.Close();
                 }
-                catch { /* Ignore errors in error handling */ }
+                catch (Exception closeEx) 
+                { 
+                    Console.Error.WriteLine($"Error sending error response: {closeEx.Message}");
+                }
             }
         }
 
@@ -314,6 +344,7 @@ namespace Worker
                 // Use cached health status if within cache duration
                 if (DateTime.UtcNow - _lastCheck < HealthCacheDuration)
                 {
+                    Console.WriteLine($"Using cached health status: {(_lastHealthStatus ? "healthy" : "unhealthy")}");
                     return _lastHealthStatus;
                 }
 
@@ -327,6 +358,9 @@ namespace Worker
                         return _lastHealthStatus;
                     }
 
+                    Console.WriteLine("Performing health check...");
+                    var startTime = DateTime.UtcNow;
+                    
                     var dbTask = CheckDatabaseAsync();
                     var redisTask = CheckRedisAsync();
 
@@ -335,8 +369,8 @@ namespace Worker
                     _lastHealthStatus = dbTask.Result && redisTask.Result;
                     _lastCheck = DateTime.UtcNow;
 
-                    // Log health status changes
-                    Console.WriteLine($"Health check status: {(_lastHealthStatus ? "healthy" : "unhealthy")}, " +
+                    var checkTime = DateTime.UtcNow - startTime;
+                    Console.WriteLine($"Health check completed in {checkTime.TotalMilliseconds}ms: {(_lastHealthStatus ? "healthy" : "unhealthy")}, " +
                                     $"Redis: {(redisTask.Result ? "up" : "down")}, " +
                                     $"Database: {(dbTask.Result ? "up" : "down")}");
                     
