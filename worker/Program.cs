@@ -208,16 +208,31 @@ namespace Worker
             _cancellationTokenSource = new CancellationTokenSource();
             _healthCheckLock = new SemaphoreSlim(1, 1);
             
-            // Listen on all interfaces for container health checks
-            _listener.Prefixes.Add("http://*:8080/health/");
+            // Add multiple prefixes to handle different health check paths
+            _listener.Prefixes.Add("http://+:8080/health/");
+            _listener.Prefixes.Add("http://+:8080/health");
+            _listener.Prefixes.Add("http://localhost:8080/health/");
+            _listener.Prefixes.Add("http://localhost:8080/health");
         }
 
         public async void Start()
         {
             try
             {
-                _listener.Start();
-                Console.WriteLine("Health check running on port 8080");
+                try
+                {
+                    _listener.Start();
+                }
+                catch (HttpListenerException ex)
+                {
+                    // If binding to + fails, try binding to * as fallback
+                    _listener.Prefixes.Clear();
+                    _listener.Prefixes.Add("http://*:8080/health/");
+                    _listener.Prefixes.Add("http://*:8080/health");
+                    _listener.Start();
+                }
+
+                Console.WriteLine($"Health check running on port 8080 with prefixes: {string.Join(", ", _listener.Prefixes)}");
 
                 // Perform initial health check
                 var initialHealth = await CheckHealthAsync();
@@ -237,7 +252,7 @@ namespace Worker
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Health check error: {ex.Message}");
+                        Console.Error.WriteLine($"Health check error: {ex.Message}");
                         await Task.Delay(1000, _cancellationTokenSource.Token); // Back off on errors
                     }
                 }
@@ -255,6 +270,8 @@ namespace Worker
             {
                 using (var response = context.Response)
                 {
+                    Console.WriteLine($"Received health check request from {context.Request.RemoteEndPoint} for {context.Request.RawUrl}");
+                    
                     var isHealthy = await CheckHealthAsync();
                     
                     response.StatusCode = isHealthy ? 200 : 500;
@@ -274,6 +291,8 @@ namespace Worker
                     
                     response.ContentLength64 = buffer.Length;
                     await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    
+                    Console.WriteLine($"Health check response: {json}");
                 }
             }
             catch (Exception ex)
