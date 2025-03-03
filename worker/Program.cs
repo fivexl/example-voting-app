@@ -208,32 +208,44 @@ namespace Worker
             _cancellationTokenSource = new CancellationTokenSource();
             _healthCheckLock = new SemaphoreSlim(1, 1);
             
-            // Only listen on localhost for security
-            _listener.Prefixes.Add("http://localhost:8080/health/");
+            // Listen on all interfaces for container health checks
+            _listener.Prefixes.Add("http://*:8080/health/");
         }
 
         public async void Start()
         {
-            _listener.Start();
-            Console.WriteLine("Health check running on port 8080");
-
-            while (!_cancellationTokenSource.Token.IsCancellationRequested)
+            try
             {
-                try 
+                _listener.Start();
+                Console.WriteLine("Health check running on port 8080");
+
+                // Perform initial health check
+                var initialHealth = await CheckHealthAsync();
+                Console.WriteLine($"Initial health check status: {(initialHealth ? "healthy" : "unhealthy")}");
+
+                while (!_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    var context = await _listener.GetContextAsync();
-                    _ = HandleHealthCheckAsync(context); // Fire and forget, but with error handling
+                    try 
+                    {
+                        var context = await _listener.GetContextAsync();
+                        _ = HandleHealthCheckAsync(context); // Fire and forget, but with error handling
+                    }
+                    catch (HttpListenerException) when (_cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        // Normal shutdown
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Health check error: {ex.Message}");
+                        await Task.Delay(1000, _cancellationTokenSource.Token); // Back off on errors
+                    }
                 }
-                catch (HttpListenerException) when (_cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    // Normal shutdown
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Health check error: {ex.Message}");
-                    await Task.Delay(1000, _cancellationTokenSource.Token); // Back off on errors
-                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Fatal error in health check service: {ex}");
+                throw; // Rethrow to crash the container if health check can't start
             }
         }
 
@@ -247,10 +259,15 @@ namespace Worker
                     
                     response.StatusCode = isHealthy ? 200 : 500;
                     response.ContentType = "application/json";
+                    response.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
+                    response.Headers.Add("Pragma", "no-cache");
+                    response.Headers.Add("Expires", "0");
                     
                     var status = new { 
                         status = isHealthy ? "healthy" : "unhealthy",
-                        timestamp = DateTime.UtcNow
+                        timestamp = DateTime.UtcNow,
+                        redis = await CheckRedisAsync(),
+                        database = await CheckDatabaseAsync()
                     };
                     var json = JsonConvert.SerializeObject(status);
                     var buffer = System.Text.Encoding.UTF8.GetBytes(json);
@@ -261,41 +278,60 @@ namespace Worker
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling health check request: {ex.Message}");
+                Console.Error.WriteLine($"Error handling health check request: {ex.Message}");
+                try
+                {
+                    context.Response.StatusCode = 500;
+                    context.Response.Close();
+                }
+                catch { /* Ignore errors in error handling */ }
             }
         }
 
         private async Task<bool> CheckHealthAsync()
         {
-            // Use cached health status if within cache duration
-            if (DateTime.UtcNow - _lastCheck < HealthCacheDuration)
-            {
-                return _lastHealthStatus;
-            }
-
-            // Ensure only one health check runs at a time
-            await _healthCheckLock.WaitAsync();
             try
             {
-                // Double-check cache after acquiring lock
+                // Use cached health status if within cache duration
                 if (DateTime.UtcNow - _lastCheck < HealthCacheDuration)
                 {
                     return _lastHealthStatus;
                 }
 
-                var dbTask = CheckDatabaseAsync();
-                var redisTask = CheckRedisAsync();
+                // Ensure only one health check runs at a time
+                await _healthCheckLock.WaitAsync();
+                try
+                {
+                    // Double-check cache after acquiring lock
+                    if (DateTime.UtcNow - _lastCheck < HealthCacheDuration)
+                    {
+                        return _lastHealthStatus;
+                    }
 
-                await Task.WhenAll(dbTask, redisTask);
-                
-                _lastHealthStatus = dbTask.Result && redisTask.Result;
-                _lastCheck = DateTime.UtcNow;
-                
-                return _lastHealthStatus;
+                    var dbTask = CheckDatabaseAsync();
+                    var redisTask = CheckRedisAsync();
+
+                    await Task.WhenAll(dbTask, redisTask);
+                    
+                    _lastHealthStatus = dbTask.Result && redisTask.Result;
+                    _lastCheck = DateTime.UtcNow;
+
+                    // Log health status changes
+                    Console.WriteLine($"Health check status: {(_lastHealthStatus ? "healthy" : "unhealthy")}, " +
+                                    $"Redis: {(redisTask.Result ? "up" : "down")}, " +
+                                    $"Database: {(dbTask.Result ? "up" : "down")}");
+                    
+                    return _lastHealthStatus;
+                }
+                finally
+                {
+                    _healthCheckLock.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                _healthCheckLock.Release();
+                Console.Error.WriteLine($"Error during health check: {ex.Message}");
+                return false;
             }
         }
 
