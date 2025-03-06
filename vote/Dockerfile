@@ -6,6 +6,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
+# 1777 means: drwxrwxrwt (anyone can write, but files are protected from deletion by other users)
+RUN mkdir -p /tmp && chmod 1777 /tmp
+
 # Set the application directory
 WORKDIR /usr/local/app
 
