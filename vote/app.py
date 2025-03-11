@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, make_response, g
-from redis import Redis
+# from redis import Redis
+import valkey
 import os
 import socket
 import random
@@ -25,9 +26,9 @@ def get_redis():
         socket_timeout = int(os.getenv('REDIS_SOCKET_TIMEOUT', 5))
 
         if redis_password:
-            g.redis = Redis(host=redis_host, port=redis_port, password=redis_password, db=redis_db, socket_timeout=socket_timeout)
+            g.redis = valkey.Valkey(host=redis_host, port=redis_port, password=redis_password, db=redis_db, socket_timeout=socket_timeout)
         else:
-            g.redis = Redis(host=redis_host, port=redis_port, db=redis_db, socket_timeout=socket_timeout)
+            g.redis = valkey.Valkey(host=redis_host, port=redis_port, db=redis_db, socket_timeout=socket_timeout)
 
     return g.redis
 
