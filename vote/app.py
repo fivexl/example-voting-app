@@ -33,8 +33,8 @@ def get_redis():
                 password=redis_password,
                 db=redis_db,
                 socket_timeout=socket_timeout,
-                ssl=True,  # ✅ Enable TLS/SSL
-                ssl_cert_reqs=None  # ✅ Disable certificate validation (optional)
+                ssl=True,
+                ssl_cert_reqs=None
             )
         else:
             g.redis = valkey.Valkey(
@@ -42,8 +42,8 @@ def get_redis():
                 port=redis_port,
                 db=redis_db,
                 socket_timeout=socket_timeout,
-                ssl=True,  # ✅ Enable TLS/SSL
-                ssl_cert_reqs=None  # ✅ Disable certificate validation (optional)
+                ssl=True,
+                ssl_cert_reqs=None
             )
 
     return g.redis

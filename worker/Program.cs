@@ -78,6 +78,9 @@ namespace Worker
                 SyncTimeout = 5000,
                 KeepAlive = 5,
                 ReconnectRetryPolicy = new ExponentialRetry(InitialRetryDelay.Milliseconds),
+                Ssl = true,
+                SslHost = redisHost,
+                TrustServerCertificate = true
             };
 
             if (!string.IsNullOrEmpty(redisPassword))
