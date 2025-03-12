@@ -20,15 +20,31 @@ app.logger.setLevel(logging.INFO)
 def get_redis():
     if not hasattr(g, 'redis'):
         redis_host = os.getenv('REDIS_HOST', 'redis')
+        app.logger.info('redis_host: %s', redis_host)
         redis_port = int(os.getenv('REDIS_PORT', 6379))
         redis_password = os.getenv('REDIS_PASSWORD', None)
         redis_db = int(os.getenv('REDIS_DB', 0))
         socket_timeout = int(os.getenv('REDIS_SOCKET_TIMEOUT', 5))
 
         if redis_password:
-            g.redis = valkey.Valkey(host=redis_host, port=redis_port, password=redis_password, db=redis_db, socket_timeout=socket_timeout)
+            g.redis = valkey.Valkey(
+                host=redis_host,
+                port=redis_port,
+                password=redis_password,
+                db=redis_db,
+                socket_timeout=socket_timeout,
+                ssl=True,  # ✅ Enable TLS/SSL
+                ssl_cert_reqs=None  # ✅ Disable certificate validation (optional)
+            )
         else:
-            g.redis = valkey.Valkey(host=redis_host, port=redis_port, db=redis_db, socket_timeout=socket_timeout)
+            g.redis = valkey.Valkey(
+                host=redis_host,
+                port=redis_port,
+                db=redis_db,
+                socket_timeout=socket_timeout,
+                ssl=True,  # ✅ Enable TLS/SSL
+                ssl_cert_reqs=None  # ✅ Disable certificate validation (optional)
+            )
 
     return g.redis
 
@@ -75,3 +91,5 @@ if __name__ == "__main__":
         debug=True,
         threaded=True
     )
+
+# redis-cli -h master.vote.0xbjyd.use1.cache.amazonaws.com
