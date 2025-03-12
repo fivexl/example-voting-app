@@ -18,6 +18,8 @@ RUN npm ci && \
 
 COPY . .
 
+COPY --from=ghcr.io/fivexl/lprobe:0.1.5 /lprobe /bin/lprobe
+
 ENV PORT=8080
 EXPOSE 8080
 

@@ -23,7 +23,8 @@ RUN dotnet publish -c release -o /app -a $TARGETARCH --self-contained false --no
 
 # app image
 FROM mcr.microsoft.com/dotnet/runtime:7.0
-RUN apt-get update && apt-get install -y curl
+COPY --from=ghcr.io/fivexl/lprobe:0.1.5 /lprobe /bin/lprobe
+
 WORKDIR /app
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "Worker.dll"]

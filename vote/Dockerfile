@@ -1,11 +1,7 @@
 # base defines a base stage that uses the official python runtime base image
 FROM python:3.11-slim AS base
 
-# Add curl for healthcheck
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
-
+COPY --from=ghcr.io/fivexl/lprobe:0.1.5 /lprobe /bin/lprobe
 
 VOLUME /tmp
 # 1777 means: drwxrwxrwt (anyone can write, but files are protected from deletion by other users)
