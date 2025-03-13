@@ -1,0 +1,40 @@
+{
+	storage file_system {
+		root /tmp
+	}
+	admin off
+	persist_config off
+}
+
+:8080 {
+	route /health {
+		respond "OK" 200
+	}
+
+	@protected not path /health
+	basic_auth @protected {
+		fivexl $2a$14$XKJto9Ag.oLaYemhvtytWONHMfT6FFc.ytiJhRXgF9EY0.YUmUghq
+	}
+
+	redir /result /result/
+
+	handle_path /result/* {
+		reverse_proxy result.services:8080
+	}
+
+	redir /vote /vote/
+
+	handle_path /vote/* {
+		reverse_proxy vote.services:8080
+	}
+
+	handle {
+		root * /usr/share/caddy
+		file_server
+		try_files {path} /index.html
+	}
+
+	log {
+		output stdout
+	}
+}

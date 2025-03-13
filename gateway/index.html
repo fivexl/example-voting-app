@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+    <link rel="shortcut icon" href="#">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
+    <title>Welcome to Cats and Dogs</title>
+</head>
+<style media="screen">
+  body {
+          background-color: #e1ece1;
+          font-size: 50pt;
+          color: rgb(35, 34, 34);
+    }
+</style>
+<body>
+    <div class="container-fluid">
+      <div id="one" class="text-center">
+        <span>"Whats my url?"</span>
+      </div>
+      <div class="text-center">
+        <iframe id="main" src="init.jpg" height="600" width="600">What will it be?</iframe>
+      </div>
+      <div class="row">
+        <div class="col-md-6 text-center">
+          <button onclick="LoadCats()">Cats!</button>
+        </div>
+        <div class="col-md-6 text-center">
+          <button onclick="LoadDogs()">Dogs!</button>
+        </div>
+      </div>
+    </div>
+<script>
+  function LoadCats() {
+    document.getElementById("main").src = "cats/";
+  }
+  function LoadDogs() {
+    document.getElementById("main").src = "dogs/";
+  }
+  $('#one span').text(window.location.href);
+</script>
+</body>
+</html>
