@@ -29,7 +29,7 @@ echo "Image pushed to: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO_NAME:$TAG
 
 # Force ECS service to deploy a new task
 echo "Forcing new deployment..."
-aws ecs update-service --cluster "$CLUSTER_NAME" --service "$SERVICE_NAME" --force-new-deployment
+AWS_PAGER="" aws ecs update-service --cluster "$CLUSTER_NAME" --service "$SERVICE_NAME" --force-new-deployment --output text
 
 # Get the current running tasks
 TASK_ARNS=$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVICE_NAME" --query "taskArns" --output text)
@@ -38,7 +38,7 @@ TASK_ARNS=$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVIC
 if [[ -n "$TASK_ARNS" ]]; then
   echo "Stopping existing tasks..."
   for TASK_ARN in $TASK_ARNS; do
-    aws ecs stop-task --cluster "$CLUSTER_NAME" --task "$TASK_ARN" --reason "Deploying new version"
+    AWS_PAGER="" aws ecs stop-task --cluster "$CLUSTER_NAME" --task "$TASK_ARN" --reason "Deploying new version"
   done
 else
   echo "No existing tasks found."
