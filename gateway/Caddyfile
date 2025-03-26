@@ -3,41 +3,44 @@
 		root /tmp
 	}
 	admin off
+    auto_https off
 	persist_config off
+  	debug
 }
 
-(common-config) {
+:8080 {
 	route /health {
 		respond "OK" 200
 	}
-	@protected not path /health
-	basic_auth @protected {
-		fivexl $2a$14$XKJto9Ag.oLaYemhvtytWONHMfT6FFc.ytiJhRXgF9EY0.YUmUghq
+
+  redir /result /result/
+
+  handle_path /result/* {
+    reverse_proxy result.services:8080
+  }
+
+  redir /vote /vote/
+
+  handle_path /vote/* {
+    reverse_proxy vote.services:8080
+  }
+
+  log {
+    output stdout
+  }
+}
+
+result.fivexl.dev {
+	reverse_proxy result.services:8080
+}
+
+vote.fivexl.dev {
+	reverse_proxy https://vote.services:8080 {
+		header_up Host {http.reverse_proxy.upstream.hostport}
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			tls_insecure_skip_verify
+		}
 	}
 }
 
-result.{$DOMAIN} {
-	# Reuse the "common-config" snippet here
-	import common-config
-
-	handle {
-		reverse_proxy result.services:8080
-	}
-
-	log {
-		output stdout
-	}
-}
-
-vote.{$DOMAIN} {
-	# Reuse the "common-config" snippet here
-	import common-config
-
-	handle {
-		reverse_proxy vote.services:8080
-	}
-
-	log {
-		output stdout
-	}
-}
