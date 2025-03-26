@@ -8,6 +8,7 @@ var express = require('express'),
     path = require('path');
 
 var port = process.env.PORT || 4000;
+const basePath = process.env.BASE_PATH || '';
 
 io.on('connection', function (socket) {
   socket.emit('message', { text: 'Welcome!' });
@@ -69,7 +70,12 @@ function collectVotesFromResult(result) {
 
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(__dirname + '/views'));
+app.use(express.static(__dirname + '/views', {
+  setHeaders: function (res, path) {
+    // This allows your frontend to understand how to construct URLs
+    res.setHeader('X-Base-Path', basePath);
+  }
+}));
 
 app.get('/', function (req, res) {
   res.sendFile(path.resolve(__dirname + '/views/index.html'));
