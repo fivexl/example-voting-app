@@ -13,23 +13,10 @@
 	handle @health {
 		respond "OK" 200
 	}
-	
-	@result_path path /result /result/*
-	handle @result_path {
-		uri strip_prefix /result
-		reverse_proxy result.services:8080 {
-			header_up X-Original-URI {uri}
-			header_up X-Forwarded-Path /result
-		}
-	}
-	
-	@vote_path path /vote /vote/*
-	handle @vote_path {
-		uri strip_prefix /vote
-		reverse_proxy vote.services:8080 {
-			header_up X-Original-URI {uri}
-			header_up X-Forwarded-Path /vote
-		}
+
+	@protected not path /health
+	basic_auth @protected {
+		fivexl $2a$14$XKJto9Ag.oLaYemhvtytWONHMfT6FFc.ytiJhRXgF9EY0.YUmUghq
 	}
 	
 	@result_domain host result.fivexl.dev
@@ -42,11 +29,6 @@
 		reverse_proxy vote.services:8080
 	}
 
-	@static_domain host static.fivexl.dev
-	handle @static_domain {
-		respond "hello world!"
-	}
-	
 	handle_errors {
 		respond "{http.error.status_code} {http.error.status_text}: {http.error.message}" {http.error.status_code}
 	}
