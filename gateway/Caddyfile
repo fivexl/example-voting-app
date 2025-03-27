@@ -9,38 +9,51 @@
 }
 
 :8080 {
-	route /health {
+	@health path /health
+	handle @health {
 		respond "OK" 200
 	}
-
-  redir /result /result/
-
-  handle_path /result/* {
-    reverse_proxy result.services:8080
-  }
-
-  redir /vote /vote/
-
-  handle_path /vote/* {
-    reverse_proxy vote.services:8080
-  }
-
-  log {
-    output stdout
-  }
-}
-
-result.fivexl.dev {
-	reverse_proxy result.services:8080
-}
-
-vote.fivexl.dev {
-	reverse_proxy https://vote.services:8080 {
-		header_up Host {http.reverse_proxy.upstream.hostport}
-		header_up X-Forwarded-Proto {scheme}
-		transport http {
-			tls_insecure_skip_verify
+	
+	@result_path path /result /result/*
+	handle @result_path {
+		uri strip_prefix /result
+		reverse_proxy result.services:8080 {
+			header_up X-Original-URI {uri}
+			header_up X-Forwarded-Path /result
 		}
 	}
-}
+	
+	@vote_path path /vote /vote/*
+	handle @vote_path {
+		uri strip_prefix /vote
+		reverse_proxy vote.services:8080 {
+			header_up X-Original-URI {uri}
+			header_up X-Forwarded-Path /vote
+		}
+	}
+	
+	@result_domain host result.fivexl.dev
+	handle @result_domain {
+		reverse_proxy result.services:8080
+	}
+	
+	@vote_domain host vote.fivexl.dev
+	handle @vote_domain {
+		reverse_proxy vote.services:8080
+	}
 
+	@static_domain host static.fivexl.dev
+	handle @static_domain {
+		respond "hello world!"
+	}
+	
+	handle_errors {
+		respond "{http.error.status_code} {http.error.status_text}: {http.error.message}" {http.error.status_code}
+	}
+	
+	log {
+		output stdout
+		format console
+		level DEBUG
+	}
+}
